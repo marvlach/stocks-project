@@ -14,7 +14,7 @@ def read_stock_files(directory: str) -> pd.DataFrame:
             file_path = os.path.join(directory, filename)
             df = pd.read_csv(
                 file_path,
-                parse_dates=["Date"],
+                #parse_dates=["Date"],
                 dtype={"Open": float, "High": float, "Low": float, "Close": float},
             )
             stock_name = filename.split(".")[0]
