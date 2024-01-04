@@ -40,9 +40,10 @@ class Portfolio:
         if not isinstance(count, int) or count <= 0:
             raise TypeError("count needs to be positive integer")
 
-        valid_cols = {"Open", "High", "Low", "Close", "Volume"}
+        """ valid_cols = {"Open", "High", "Low", "Close", "Volume"}
         if set(df_row.index) != valid_cols:
-            raise ValueError(f"Columns need to be {valid_cols}")
+            raise ValueError(f"Columns need to be {valid_cols}") 
+        """
 
         row_date, _ = df_row.name
         if self.transaction_history and row_date < self.transaction_history[-1].day:
@@ -66,6 +67,9 @@ class Portfolio:
     def get_balance(self):
         return self.balance
 
+    def get_stocks(self):
+        return self.stocks
+    
     def get_evaluation(self, df: pd.DataFrame, day: datetime.date):
         return df.loc[
             pd.IndexSlice[day, self.stocks.keys()],
@@ -109,5 +113,7 @@ class Portfolio:
 
         # update
         self.stocks[row_name] -= count
+        if self.stocks[row_name] == 0:
+            del self.stocks[row_name]
         self.balance += money
         self.__update_transaction_history(row_date, row_name, transaction_type, count)

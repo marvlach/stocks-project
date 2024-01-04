@@ -31,7 +31,7 @@ def write_transaction_file(file_path: str, transactions: list[Transaction]):
         file.write(f"{len(transactions)}\n")
 
         for transaction in transactions:
-            line = f"{transaction.day} {transaction.transaction_type} {transaction.stock} {transaction.count}\n"
+            line = f"{transaction.day} {transaction.transaction_type} {transaction.stock.upper()} {transaction.count}\n"
             file.write(line)
 
 
