@@ -1,6 +1,6 @@
 import pandas as pd
 from portfolio import Portfolio, Transaction
-
+import random
 
 def evaluate_transactions(df: pd.DataFrame, transactions: list[Transaction]):
     portfolio = Portfolio()
@@ -88,13 +88,16 @@ class Trader:
                     stock_count,
                 )
 
-    def trade(self):
+    def trade(self, grind_factor: float = 1.0):
         end_of_time = pd.to_datetime(self.df["AllTimeMaxCloseDate"].max())
+        days_to_start_mass_sell = int(1000)
+        print("Day I'll start mass selling", end_of_time - pd.Timedelta(days=days_to_start_mass_sell))
 
         for day, stocks_today in self.df.groupby("Date"):
+            
             sell_everything = (end_of_time - pd.to_datetime(day)) / pd.Timedelta(
                 days=1
-            ) < 1000
+            ) < days_to_start_mass_sell
 
             sell_high_rebuy_close, sell_open_rebuy_low = self.__intraday_opportunity(
                 stocks_today,
