@@ -86,7 +86,7 @@ class Portfolio:
         price = df_row[self.__get_price_column_from_transaction_type(transaction_type)]
         money = count * price
         if money > self.balance:
-            raise ValueError("Cannot spent more than your balance")
+            raise ValueError(f"Cannot spent more {money} than your balance {self.balance}")
 
         # update
         if row_name in self.stocks:
