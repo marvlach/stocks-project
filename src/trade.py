@@ -1,6 +1,8 @@
+from math import ceil
 import pandas as pd
 from portfolio import Portfolio, Transaction
 import random
+
 
 def evaluate_transactions(df: pd.DataFrame, transactions: list[Transaction]):
     portfolio = Portfolio()
@@ -58,7 +60,10 @@ class Trader:
             trades[stock_name] = how_many
         return trades
 
-    def __handle_buy_low(self, rows: pd.DataFrame, budget: float):
+    def __handle_buy_low(self, rows: pd.DataFrame, budget: float, days_until_end: int):
+        if rows.shape[0] == 0 or budget == 0:
+            return dict()
+
         # TODO: make the split more clever
         trades: dict[str, int] = dict()
         # split budget equally
@@ -88,13 +93,42 @@ class Trader:
                     stock_count,
                 )
 
-    def trade(self, grind_factor: float = 1.0):
+    def trade(self, days_to_start_mass_sell: int):
         end_of_time = pd.to_datetime(self.df["AllTimeMaxCloseDate"].max())
-        days_to_start_mass_sell = int(1000)
-        print("Day I'll start mass selling", end_of_time - pd.Timedelta(days=days_to_start_mass_sell))
+        print(
+            "Day I'll start mass selling",
+            end_of_time - pd.Timedelta(days=days_to_start_mass_sell),
+        )
+        start_of_mass_sell = end_of_time - pd.Timedelta(days=days_to_start_mass_sell)
+        start_of_dropping_rebuy_rate = pd.to_datetime(
+            self.df["AllTimeMinCloseDate"].min()
+        )
 
         for day, stocks_today in self.df.groupby("Date"):
-            
+            """if pd.to_datetime(day) < start_of_dropping_rebuy_rate:
+                rebuy_rate = 1
+            elif pd.to_datetime(day) < start_of_mass_sell:
+                day_diff = (pd.to_datetime(day) - start_of_mass_sell) / pd.Timedelta(
+                    days=1
+                )
+                rebuy_rate = (
+                    (1 - 0)
+                    / (
+                        (start_of_dropping_rebuy_rate - start_of_mass_sell)
+                        / pd.Timedelta(days=1)
+                    )
+                ) * day_diff
+                # print(day, rebuy_rate)
+            else:
+                rebuy_rate = 0"""
+
+            todays_stocks_i_have = stocks_today.index.get_level_values("Name").map(
+                lambda x: self.portfolio.get_stocks().get(x, 0)
+            )
+            todays_stocks_i_have_to_sell = (
+                todays_stocks_i_have >= stocks_today["CanSell"]
+            )
+
             sell_everything = (end_of_time - pd.to_datetime(day)) / pd.Timedelta(
                 days=1
             ) < days_to_start_mass_sell
@@ -104,10 +138,16 @@ class Trader:
             )
 
             # the two are mutually exclusive; only one is True for each stock
-            sell_high_rebuy_close: pd.Series = (sell_high_rebuy_close) & (
-                ~sell_everything
+            sell_high_rebuy_close: pd.Series = (
+                (sell_high_rebuy_close)
+                & (~sell_everything)
+                & (~todays_stocks_i_have_to_sell)
             )
-            sell_open_rebuy_low: pd.Series = (sell_open_rebuy_low) & (~sell_everything)
+            sell_open_rebuy_low: pd.Series = (
+                (sell_open_rebuy_low)
+                & (~sell_everything)
+                & (~todays_stocks_i_have_to_sell)
+            )
 
             """ 
             Opening
@@ -128,7 +168,7 @@ class Trader:
             )
 
             # execute open phase
-            #print("sell_open_buy_low_trades", sell_open_buy_low_trades)
+            # print("sell_open_buy_low_trades", sell_open_buy_low_trades)
             self.__execute_trades(day, sell_open_buy_low_trades, "sell-open")
 
             """  
@@ -137,23 +177,22 @@ class Trader:
             money_to_spent_on_buy = (
                 self.portfolio.get_balance() - total_money_to_rebuy_on_low
             )
+            # print('\nmoney_to_spent_on_buy', money_to_spent_on_buy)
+            # money_to_spent_on_buy = (rebuy_rate**2) * money_to_spent_on_buy
+            # print('money_to_spent_on_buy', money_to_spent_on_buy)
             stocks_i_want_to_buy: pd.Series = (
                 (stocks_today["WantToBuy"] == 1)
                 & (stocks_today["Low"] < money_to_spent_on_buy)
                 & (~sell_high_rebuy_close)
                 & (~sell_open_rebuy_low)
                 & (~sell_everything)
+                & (~todays_stocks_i_have_to_sell)
             )
 
-            buy_low_trades = (
-                (
-                    self.__handle_buy_low(
-                        stocks_today.loc[stocks_i_want_to_buy],
-                        money_to_spent_on_buy,
-                    )
-                )
-                if stocks_i_want_to_buy.any()
-                else {}
+            buy_low_trades = self.__handle_buy_low(
+                stocks_today.loc[stocks_i_want_to_buy],
+                money_to_spent_on_buy,
+                (end_of_time - pd.to_datetime(day)) / pd.Timedelta(days=1),
             )
 
             stocks_i_want_to_sell = (
@@ -163,8 +202,7 @@ class Trader:
                         self.portfolio.get_stocks().keys()
                     )
                 )
-                # & ~is_intraday_only
-            )
+            ) | todays_stocks_i_have_to_sell
             sell_high_trades = self.__handle_sell(
                 stocks_today.loc[stocks_i_want_to_sell],
             )
@@ -175,78 +213,37 @@ class Trader:
 
             # execute everything
             # buy low
-            #print("buy_low_trades", buy_low_trades)
+            # print("buy_low_trades", buy_low_trades)
             self.__execute_trades(day, buy_low_trades, "buy-low")
 
             # sell high
-            #print("sell_high_trades", sell_high_trades)
+            # print("sell_high_trades", sell_high_trades)
             self.__execute_trades(day, sell_high_trades, "sell-high")
 
             # rebuy low
-            #print("sell_open_buy_low_trades", sell_open_buy_low_trades)
+            # print("sell_open_buy_low_trades", sell_open_buy_low_trades)
+            """ rebuy_low_trades = {
+                # stock_name: ceil((rebuy_rate ** 2) * stock_count)
+                stock_name: stock_count
+                for stock_name, stock_count in sell_open_buy_low_trades.items()
+                if self.df.loc[(day, stock_name), "WantToBuy"]
+                == 1  # and random.random() < (1 - self.df.loc[(day, stock_name), 'PercentageIncrease'])
+            } """
             self.__execute_trades(day, sell_open_buy_low_trades, "buy-low")
 
             # sell high to rebuy close
-            #print("sell_high_buy_close_trades", sell_high_buy_close_trades)
+            # print("sell_high_buy_close_trades", sell_high_buy_close_trades)
             self.__execute_trades(day, sell_high_buy_close_trades, "sell-high")
 
             # close phase rebuy on close
-            #print("sell_high_buy_close_trades", sell_high_buy_close_trades)
+            # print("sell_high_buy_close_trades", sell_high_buy_close_trades)
+            """ rebuy_close_trades = {
+                # stock_name: ceil((rebuy_rate ** 2) * stock_count)
+                stock_name: stock_count
+                for stock_name, stock_count in sell_high_buy_close_trades.items()
+                if self.df.loc[(day, stock_name), "WantToBuy"]
+                == 1  # and random.random() < (1 - self.df.loc[(day, stock_name), 'PercentageIncrease'])
+            } """
             self.__execute_trades(day, sell_high_buy_close_trades, "buy-close")
 
-            #print("\n")
-
-
-def trade_1(df: pd.DataFrame, portfolio: Portfolio):
-    """
-    PoC
-    """
-    for label, row in df.iterrows():
-        # intra day good day to sell high, rebuy on close
-        sell_high_rebuy_close = (row["Low"] == row["Close"]) & (
-            row["High"] > row["Low"]
-        )
-        sell_open_rebuy_low = (row["Open"] == row["High"]) & (row["High"] > row["Low"])
-
-        opening = []
-        during = []
-        closing = []
-        if (
-            sell_high_rebuy_close or sell_open_rebuy_low
-        ) and portfolio.get_stocks().get(label[1], 0) > 0:
-            if sell_high_rebuy_close:
-                how_many = min(
-                    portfolio.get_stocks().get(label[1]), int(0.09 * row["Volume"])
-                )
-                during.append((row, portfolio.sell, "sell-high", how_many))
-                closing.append((row, portfolio.buy, "buy-close", how_many))
-
-            elif sell_open_rebuy_low:
-                how_many = min(
-                    portfolio.get_stocks().get(label[1]), int(0.09 * row["Volume"])
-                )
-                opening.append((row, portfolio.sell, "sell-open", how_many))
-                during.append((row, portfolio.buy, "buy-low", how_many))
-        else:
-            # what to buy
-            if row["WantToBuy"] == 1 and portfolio.get_balance() > row["Low"]:
-                how_many = min(
-                    int(portfolio.get_balance() / row["Low"]), int(0.09 * row["Volume"])
-                )
-                during.append((row, portfolio.buy, "buy-low", how_many))
-            # sell
-            if row["WantToSell"] == 1 and portfolio.get_stocks().get(label[1], 0) > 0:
-                how_many = min(
-                    portfolio.get_stocks().get(label[1]), int(0.09 * row["Volume"])
-                )
-                during.append((row, portfolio.sell, "sell-high", how_many))
-
-        if not opening and not during and not closing:
-            print("noop")
-        for transaction_list in [opening, during, closing]:
-            for transaction in transaction_list:
-                row, method, transaction_type, count = transaction
-                # print(transaction)
-                method(row, transaction_type, count)
-
-        print(label, portfolio.get_stocks(), portfolio.get_balance())
+            # print("\n")
