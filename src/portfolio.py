@@ -69,7 +69,7 @@ class Portfolio:
 
     def get_stocks(self):
         return self.stocks
-    
+
     def get_evaluation(self, df: pd.DataFrame, day: datetime.date):
         return df.loc[
             pd.IndexSlice[day, self.stocks.keys()],
@@ -86,7 +86,9 @@ class Portfolio:
         price = df_row[self.__get_price_column_from_transaction_type(transaction_type)]
         money = count * price
         if money > self.balance:
-            raise ValueError(f"Cannot spent more {money} than your balance {self.balance}")
+            raise ValueError(
+                f"Cannot spent more {money} than your balance {self.balance}"
+            )
 
         # update
         if row_name in self.stocks:
@@ -117,3 +119,31 @@ class Portfolio:
             del self.stocks[row_name]
         self.balance += money
         self.__update_transaction_history(row_date, row_name, transaction_type, count)
+
+
+def plot_transaction_history(df: pd.DataFrame, transactions: list[Transaction]):
+    portfolio = Portfolio()
+    money = {}
+    stocks = {}
+    both = {}
+    for transaction in transactions:
+        row_df = df.loc[(transaction.day, transaction.stock)]
+        if transaction.transaction_type.startswith("buy"):
+            portfolio.buy(row_df, transaction.transaction_type, transaction.count)
+        else:
+            portfolio.sell(row_df, transaction.transaction_type, transaction.count)
+
+        sum_transaction = 0
+
+        for stonk_name, stonk_count in portfolio.get_stocks().items():
+            try:
+                sum_transaction += (
+                    df.loc[(transaction.day, stonk_name)]["Close"] * stonk_count
+                )
+            except Exception:
+                continue
+        money[transaction.day] = portfolio.get_balance()
+        stocks[transaction.day] = sum_transaction
+        both[transaction.day] = portfolio.get_balance() + sum_transaction
+
+    return money, stocks, both
