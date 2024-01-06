@@ -1,3 +1,4 @@
+from typing import Literal
 import pandas as pd
 from portfolio import Portfolio, Transaction
 
@@ -59,6 +60,64 @@ class Trader:
         )
         return sell_high_rebuy_close, sell_open_rebuy_low
 
+    def __small_intraday_opportunity(
+        self,
+        stocks_today: pd.DataFrame,
+    ) -> tuple[pd.Series, pd.Series]:
+        """
+        Differences with __intraday_opportunity are
+
+        - we only intraday trade if we can't buy any stocks
+
+        - we only intraday trade the stock that will give the highest yield
+
+        """
+        i_can_buy_stocks = (
+            (stocks_today["WantToBuy"] == 1)
+            & (stocks_today["Low"] < self.portfolio.get_balance())
+        ).any()
+        sell_high_rebuy_close = (
+            (stocks_today["Low"] == stocks_today["Close"])
+            & (stocks_today["High"] > stocks_today["Low"])
+            & (
+                stocks_today.index.get_level_values("Name").isin(
+                    self.portfolio.get_stocks().keys()
+                )
+            )
+            & (stocks_today["WantToSell"] == 0)
+            & (
+                (stocks_today["High"] - stocks_today["Low"]) * stocks_today["Volume"]
+                == (
+                    (stocks_today["High"] - stocks_today["Low"])
+                    * stocks_today["Volume"]
+                ).max()
+            )
+            & (~i_can_buy_stocks)
+        )
+
+        sell_open_rebuy_low = (
+            (stocks_today["Open"] == stocks_today["High"])
+            & (stocks_today["High"] > stocks_today["Low"])
+            & (
+                stocks_today.index.get_level_values("Name").isin(
+                    self.portfolio.get_stocks().keys()
+                )
+            )
+            & (stocks_today["WantToSell"] == 0)
+            & (~sell_high_rebuy_close)
+            & (
+                (stocks_today["High"] - stocks_today["Low"]) * stocks_today["Volume"]
+                == (
+                    (stocks_today["High"] - stocks_today["Low"])
+                    * stocks_today["Volume"]
+                ).max()
+            )
+            & (~i_can_buy_stocks)
+        )
+
+        assert sell_high_rebuy_close.sum() <= 1 and sell_open_rebuy_low.sum() <= 1
+        return sell_high_rebuy_close, sell_open_rebuy_low
+
     def __handle_sell(self, rows: pd.DataFrame):
         """
         For every stock I want to sell, I sell as much as I can
@@ -111,8 +170,8 @@ class Trader:
                     stock_count,
                 )
 
-    def trade(self):
-        """  
+    def trade(self, grind_level: Literal["small"] | Literal["large"] = "large"):
+        """
         Trades everyday
 
         - Intraday trades the stocks according to __intraday_opportunity.
@@ -122,7 +181,7 @@ class Trader:
         - Buy WantToBuy stocks unless there are intraday-traded today or for sell
 
         - Sell WantToSell stocks
-        
+
         """
         for day, stocks_today in self.df.groupby("Date"):
             todays_stocks_i_have = stocks_today.index.get_level_values("Name").map(
@@ -133,8 +192,14 @@ class Trader:
                 todays_stocks_i_have >= stocks_today["MaxCanSellUntilEnd"]
             )
 
-            sell_high_rebuy_close, sell_open_rebuy_low = self.__intraday_opportunity(
-                stocks_today,
+            sell_high_rebuy_close, sell_open_rebuy_low = (
+                self.__intraday_opportunity(
+                    stocks_today,
+                )
+                if grind_level == "large"
+                else self.__small_intraday_opportunity(
+                    stocks_today,
+                )
             )
 
             # the two are mutually exclusive; only one is True for each stock
@@ -224,4 +289,3 @@ class Trader:
             """
             # rebuy on close
             self.__execute_trades(day, sell_high_buy_close_trades, "buy-close")
-
